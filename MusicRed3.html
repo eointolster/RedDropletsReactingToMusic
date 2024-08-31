@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music-Driven Rain Droplets Visualizer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #audioInput {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <input type="file" id="audioInput" accept="audio/*">
+    <canvas id="visualizer"></canvas>
+    <script>
+        const canvas = document.getElementById('visualizer');
+        const ctx = canvas.getContext('2d');
+        const audioInput = document.getElementById('audioInput');
+
+        let audioContext, analyser, dataArray;
+        let droplets = [];
+        let splashes = [];
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        audioInput.addEventListener('change', handleAudioFile);
+
+        class Droplet {
+            constructor(freqIndex) {
+                this.x = Math.random() * canvas.width;
+                this.y = -20;
+                this.freqIndex = freqIndex;
+                this.size = 20 + freqIndex / 2;
+                this.amplitude = 0;
+                this.innerAnimationOffset = Math.random() * Math.PI * 2;
+            }
+
+            update(amplitude, freq) {
+                this.y += 2 + amplitude * 5;
+                this.amplitude = amplitude;
+                this.freq = freq;
+
+                if (this.y > canvas.height) {
+                    splashes.push(new Splash(this.x, canvas.height, this.size, this.amplitude));
+                    return false;
+                }
+                return true;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = 'black';
+                ctx.fill();
+                ctx.strokeStyle = `rgba(255, 0, 0, ${0.5 + this.amplitude * 0.5})`;
+                ctx.lineWidth = 2 + this.amplitude * 3;
+                ctx.stroke();
+
+                // Inner animation
+                ctx.save();
+                ctx.clip();
+                const gradient = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size);
+                gradient.addColorStop(0, `rgba(128, 0, 128, ${this.amplitude})`);
+                gradient.addColorStop(0.5, `rgba(255, 0, 0, ${this.amplitude * 0.7})`);
+                gradient.addColorStop(1, `rgba(0, 255, 0, ${this.amplitude * 0.3})`);
+                ctx.fillStyle = gradient;
+                ctx.fillRect(this.x - this.size, this.y - this.size, this.size * 2, this.size * 2);
+
+                // Dynamic patterns
+                ctx.beginPath();
+                for (let i = 0; i < 5; i++) {
+                    const angle = (i / 5) * Math.PI * 2 + this.innerAnimationOffset + this.amplitude * 10;
+                    ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(
+                        this.x + Math.cos(angle) * this.size * (0.5 + this.amplitude * 0.5),
+                        this.y + Math.sin(angle) * this.size * (0.5 + this.amplitude * 0.5)
+                    );
+                }
+                ctx.strokeStyle = `rgba(0, 255, 0, ${0.5 + this.amplitude * 0.5})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        class Splash {
+            constructor(x, y, size, amplitude) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.amplitude = amplitude;
+                this.particles = [];
+                this.createParticles();
+            }
+
+            createParticles() {
+                for (let i = 0; i < 15; i++) {
+                    this.particles.push({
+                        x: this.x,
+                        y: this.y,
+                        vx: (Math.random() - 0.5) * 7,
+                        vy: -Math.random() * 7,
+                        size: Math.random() * 5 + 2
+                    });
+                }
+            }
+
+            update() {
+                this.particles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.2;
+                    p.size *= 0.95;
+                });
+                this.particles = this.particles.filter(p => p.size > 0.5);
+                return this.particles.length > 0;
+            }
+
+            draw() {
+                this.particles.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgb(${255 * this.amplitude}, 0, ${128 * (1 - this.amplitude)})`;
+                    ctx.fill();
+                });
+            }
+        }
+
+        function handleAudioFile(event) {
+            const file = event.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+
+                if (audioContext) audioContext.close();
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                audioContext.decodeAudioData(arrayBuffer, function(buffer) {
+                    const source = audioContext.createBufferSource();
+                    source.buffer = buffer;
+                    source.connect(analyser);
+                    analyser.connect(audioContext.destination);
+                    source.start(0);
+                    animate();
+                });
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function animate() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            analyser.getByteFrequencyData(dataArray);
+
+            for (let i = 0; i < dataArray.length; i++) {
+                const amplitude = dataArray[i] / 255;
+                if (amplitude > 0.5 && Math.random() < 0.1) {
+                    droplets.push(new Droplet(i));
+                }
+            }
+
+            droplets = droplets.filter(droplet => {
+                const freq = dataArray[droplet.freqIndex] / 255;
+                return droplet.update(freq, droplet.freqIndex / dataArray.length);
+            });
+            droplets.forEach(droplet => droplet.draw());
+
+            splashes = splashes.filter(splash => splash.update());
+            splashes.forEach(splash => splash.draw());
+
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>
